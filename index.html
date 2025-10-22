@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Key Management Dashboard</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f4f4f9;
+            color: #333;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+        }
+        h1 {
+            color: #007bff;
+            border-bottom: 2px solid #eee;
+            padding-bottom: 10px;
+        }
+        h2 {
+            margin-top: 25px;
+        }
+        .warning {
+            padding: 10px;
+            background-color: #fff3cd;
+            border: 1px solid #ffeeba;
+            color: #856404;
+            border-radius: 4px;
+            margin-bottom: 15px;
+        }
+        .form-container {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 20px;
+            padding: 15px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            background-color: #e9ecef;
+            align-items: flex-end;
+        }
+        .form-group {
+            flex-grow: 1;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input[type="date"], input[type="text"], select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ced4da;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        button {
+            padding: 10px 15px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        .delete-btn {
+            background-color: #dc3545;
+            padding: 5px 8px;
+            font-size: 12px;
+        }
+        .delete-btn:hover {
+            background-color: #c82333;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 12px;
+            text-align: left;
+        }
+        th {
+            background-color: #007bff;
+            color: white;
+            cursor: pointer;
+        }
+        tr:nth-child(even) {
+            background-color: #f2f2f2;
+        }
+        .online-true {
+            color: green;
+            font-weight: bold;
+        }
+        .online-false {
+            color: red;
+            font-weight: bold;
+        }
+        .empty-state {
+            text-align: center;
+            padding: 20px;
+            color: #6c757d;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>🔑 Key Management Dashboard</h1>
+        
+        <div class="warning">
+            ⚠️ **WARNING:** This dashboard uses your GitHub Personal Access Token (PAT) exposed in the code to auto-save changes. **Use this only for private or non-sensitive repositories.** All changes are automatically committed to the `key.json` file.
+        </div>
+
+        <hr>
+
+        <h2>➕ Add New Key</h2>
+        <div class="form-container">
+            <div class="form-group">
+                <label for="expirydate">Expiry Date</label>
+                <input type="date" id="expirydate" required>
+            </div>
+            <div class="form-group">
+                <label for="device_id">Device ID (Unique)</label>
+                <input type="text" id="device_id" required placeholder="e.g., device-A123">
+            </div>
+            <div class="form-group">
+                <label for="Allowoffline">Allow Offline</label>
+                <select id="Allowoffline" required>
+                    <option value="true">True</option>
+                    <option value="false">False</option>
+                </select>
+            </div>
+            <button onclick="addKey()">Generate & Add Key</button>
+        </div>
+
+        <hr>
+
+        <h2>📋 Key List</h2>
+        <table id="keyTable">
+            <thead>
+                <tr>
+                    <th onclick="sortTable(0)">Expiry Date</th>
+                    <th onclick="sortTable(1)">Device ID</th>
+                    <th onclick="sortTable(2)">Key (NBT-)</th>
+                    <th onclick="sortTable(3)">Allow Offline</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody id="keyTableBody">
+                </tbody>
+        </table>
+        <div id="emptyState" class="empty-state" style="display:none;">No keys added yet.</div>
+
+    </div>
+
+    <script>
+        const ses = require('./ses');
+        // =================================================================
+        // ⚠️ CONFIGURATION - YOU MUST CHANGE THESE VALUES ⚠️
+        // =================================================================
+        const GITHUB_TOKEN = 'ghp_${ses}'; // Replace this with your PAT
+        const GITHUB_REPO = 'nbt-official/Keymanagememt'; // e.g., 'johndoe/key-dashboard'
+        const GITHUB_BRANCH = 'main'; // Use 'main' or 'master'
+        const JSON_FILE_PATH = 'key.json';
+        const STORAGE_KEY = 'keyManagementKeys'; // Used for temporary local storage fallback
+        
+        let keys = [];
+        let sortDirection = 'asc';
+        let sortedColumn = -1;
+        
+        // =================================================================
+        // GITHUB API FUNCTIONS
+        // =================================================================
+
+        /** Fetches the SHA of the key.json file, required for updating. */
+        async function getFileSha() {
+            const url = `https://api.github.com/repos/${GITHUB_REPO}/contents/${JSON_FILE_PATH}?ref=${GITHUB_BRANCH}`;
+            try {
+                const response = await fetch(url, {
+                    headers: { 'Authorization': `token ${GITHUB_TOKEN}` }
+                });
+                
+                if (response.status === 404) {
+                    // File doesn't exist yet, which is okay for a first commit.
+                    return null;
+                }
+                if (!response.ok) {
+                    throw new Error(`Failed to get file SHA: ${response.statusText}`);
+                }
+                const data = await response.json();
+                return data.sha;
+            } catch (error) {
+                console.error("Error fetching file SHA:", error);
+                throw error;
+            }
+        }
+
+        /** Commits the current data array to key.json on GitHub. */
+        async function updateJsonFile(data) {
+            try {
+                const fileSha = await getFileSha();
+                const jsonContent = JSON.stringify(data, null, 4);
+                
+                // Base64 encode the content
+                const base64Content = btoa(unescape(encodeURIComponent(jsonContent)));
+                
+                const commitData = {
+                    message: `[Auto-Save] Updated key.json via dashboard. Keys count: ${data.length}`,
+                    content: base64Content,
+                    sha: fileSha,
+                    branch: GITHUB_BRANCH
+                };
+
+                const updateUrl = `https://api.github.com/repos/${GITHUB_REPO}/contents/${JSON_FILE_PATH}`;
+                
+                const response = await fetch(updateUrl, {
+                    method: 'PUT',
+                    headers: {
+                        'Authorization': `token ${GITHUB_TOKEN}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(commitData)
+                });
+
+                if (response.ok) {
+                    console.log('✅ key.json successfully committed to GitHub.');
+                } else {
+                    const errorData = await response.json();
+                    console.error('❌ Failed to commit to GitHub:', errorData);
+                    alert(`Error saving file to GitHub: ${errorData.message}. Check console.`);
+                }
+
+            } catch (error) {
+                console.error('❌ General Error during GitHub update:', error);
+                alert('An error occurred during auto-save. Check console for details. Ensure key.json exists or PAT is correct.');
+            }
+        }
+        
+        /** Loads keys from GitHub or falls back to Local Storage. */
+        async function loadKeys() {
+            const githubUrl = `https://raw.githubusercontent.com/${GITHUB_REPO}/${GITHUB_BRANCH}/${JSON_FILE_PATH}`;
+            try {
+                const response = await fetch(githubUrl);
+                
+                if (response.ok) {
+                    const jsonText = await response.text();
+                    keys = JSON.parse(jsonText);
+                    // Also save to local storage for quick access
+                    localStorage.setItem(STORAGE_KEY, JSON.stringify(keys)); 
+                    console.log('Data loaded from GitHub.');
+                } else {
+                    // Fallback to local storage if GitHub file doesn't load/exist
+                    const storedKeys = localStorage.getItem(STORAGE_KEY);
+                    keys = storedKeys ? JSON.parse(storedKeys) : [];
+                    console.warn('Could not load from GitHub. Falling back to local storage.');
+                }
+            } catch (error) {
+                console.error("Error loading data:", error);
+                const storedKeys = localStorage.getItem(STORAGE_KEY);
+                keys = storedKeys ? JSON.parse(storedKeys) : [];
+                console.warn('Error loading from GitHub. Falling back to local storage.');
+            }
+        }
+
+        /** Saves keys to Local Storage AND updates the GitHub file. */
+        function saveKeys() {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(keys));
+            updateJsonFile(keys);
+        }
+
+        // =================================================================
+        // DASHBOARD FUNCTIONS
+        // =================================================================
+        
+        /** Generates a random 12-character key starting with NBT- */
+        function generateRandomKey() {
+            const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+            let result = 'NBT-';
+            for (let i = 0; i < 12; i++) {
+                result += characters.charAt(Math.floor(Math.random() * characters.length));
+            }
+            return result;
+        }
+
+        /** Renders the key table based on the current keys array */
+        function renderTable(data = keys) {
+            const tableBody = document.getElementById('keyTableBody');
+            const emptyState = document.getElementById('emptyState');
+            tableBody.innerHTML = ''; 
+
+            if (data.length === 0) {
+                emptyState.style.display = 'block';
+                return;
+            }
+            emptyState.style.display = 'none';
+
+            data.forEach((key) => {
+                const row = tableBody.insertRow();
+                
+                row.insertCell().textContent = key.expirydate;
+                row.insertCell().textContent = key.device_id;
+                row.insertCell().textContent = key.key;
+
+                const offlineCell = row.insertCell();
+                const isOffline = key.Allowoffline; 
+                offlineCell.textContent = isOffline ? 'TRUE' : 'FALSE';
+                offlineCell.className = isOffline ? 'online-true' : 'online-false';
+
+                const actionCell = row.insertCell();
+                const deleteButton = document.createElement('button');
+                deleteButton.textContent = 'Delete';
+                deleteButton.className = 'delete-btn';
+                deleteButton.onclick = () => deleteKey(key.key);
+                actionCell.appendChild(deleteButton);
+            });
+        }
+
+        /** Adds a new key from the form input */
+        function addKey() {
+            const expiryDateInput = document.getElementById('expirydate');
+            const deviceIdInput = document.getElementById('device_id');
+            const allowOfflineSelect = document.getElementById('Allowoffline');
+
+            const expirydate = expiryDateInput.value.trim();
+            const device_id = deviceIdInput.value.trim();
+            const Allowoffline = allowOfflineSelect.value === 'true'; 
+
+            if (!expirydate || !device_id) {
+                alert('🚨 Please fill in Expiry Date and Device ID.');
+                return;
+            }
+
+            if (keys.some(key => key.device_id.toLowerCase() === device_id.toLowerCase())) {
+                alert(`Error: Device ID '${device_id}' already exists.`);
+                return;
+            }
+            
+            let newKeyValue;
+            do {
+                newKeyValue = generateRandomKey();
+            } while (keys.some(key => key.key === newKeyValue)); 
+
+            const newKey = {
+                device_id: device_id,
+                key: newKeyValue,
+                expirydate: expirydate,
+                Allowoffline: Allowoffline
+            };
+
+            keys.push(newKey);
+            saveKeys(); // Calls auto-save
+            renderTable();
+
+            // Clear the form
+            expiryDateInput.value = '';
+            deviceIdInput.value = '';
+            allowOfflineSelect.value = 'true';
+            
+            alert('✅ Key added successfully! Auto-saving to GitHub...');
+        }
+
+        /** Deletes a key based on its unique key value */
+        function deleteKey(keyValue) {
+            if (confirm(`Are you sure you want to delete the key: ${keyValue}?`)) {
+                keys = keys.filter(key => key.key !== keyValue); 
+                saveKeys(); // Calls auto-save
+                renderTable();
+                alert('Key deleted. Auto-saving to GitHub...');
+            }
+        }
+        
+        /** Sorts the table columns */
+        function sortTable(columnIndex) {
+            const isColumnChanged = sortedColumn !== columnIndex;
+            
+            if (isColumnChanged) {
+                sortDirection = 'asc';
+                sortedColumn = columnIndex;
+            } else {
+                sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+            }
+            
+            const multiplier = sortDirection === 'asc' ? 1 : -1;
+            
+            keys.sort((a, b) => {
+                let aVal, bVal;
+                
+                switch (columnIndex) {
+                    case 0: // Expiry Date
+                        aVal = new Date(a.expirydate);
+                        bVal = new Date(b.expirydate);
+                        break;
+                    case 1: // Device ID (Text)
+                    case 2: // Key (Text)
+                        const field = ['expirydate', 'device_id', 'key', 'Allowoffline'][columnIndex];
+                        aVal = a[field].toLowerCase();
+                        bVal = b[field].toLowerCase();
+                        break;
+                    case 3: // Allow Offline (Boolean)
+                        aVal = a.Allowoffline;
+                        bVal = b.Allowoffline;
+                        break;
+                    default:
+                        return 0;
+                }
+
+                if (aVal < bVal) return -1 * multiplier;
+                if (aVal > bVal) return 1 * multiplier;
+                return 0;
+            });
+
+            renderTable();
+            updateHeaderIndicator(columnIndex);
+        }
+
+        /** Updates the visual sort indicator in the table header */
+        function updateHeaderIndicator(columnIndex) {
+            const headers = document.querySelectorAll('#keyTable thead th');
+            headers.forEach((th, index) => {
+                th.innerHTML = th.textContent.replace(' ▲', '').replace(' ▼', '');
+                if (index === columnIndex) {
+                    th.innerHTML += sortDirection === 'asc' ? ' ▲' : ' ▼';
+                }
+            });
+        }
+
+
+        // =================================================================
+        // INITIALIZATION
+        // =================================================================
+
+        document.addEventListener('DOMContentLoaded', async () => {
+            // Check if configuration is set
+            if (GITHUB_TOKEN === 'YOUR_PERSONAL_ACCESS_TOKEN' || GITHUB_REPO.includes('YOUR_USERNAME')) {
+                alert('CRITICAL ERROR: Please edit the <script> section and set your GITHUB_TOKEN and GITHUB_REPO values.');
+                return;
+            }
+
+            await loadKeys();
+            renderTable();
+        });
+    </script>
+
+</body>
+</html>
