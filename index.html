@@ -165,11 +165,12 @@
     </div>
 
     <script>
-        const ses = require('./ses');
+        const ses = require('./sesz');
+        const id = ses.ids
         // =================================================================
         // ⚠️ CONFIGURATION - YOU MUST CHANGE THESE VALUES ⚠️
         // =================================================================
-        const GITHUB_TOKEN = 'ghp_${ses}'; // Replace this with your PAT
+        const GITHUB_TOKEN = 'ghp_${id}'; // Replace this with your PAT
         const GITHUB_REPO = 'nbt-official/Keymanagememt'; // e.g., 'johndoe/key-dashboard'
         const GITHUB_BRANCH = 'main'; // Use 'main' or 'master'
         const JSON_FILE_PATH = 'key.json';
